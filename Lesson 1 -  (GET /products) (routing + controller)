@@ -1,0 +1,286 @@
+// lib/main.dart
+import 'package:flutter/material.dart';
+import 'package:get/get.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+
+// ----------------- Model -----------------
+class Product {
+  final int id;
+  final String title;
+  final double price;
+  final String description;
+  final String category;
+  final String image;
+
+  Product({
+    required this.id,
+    required this.title,
+    required this.price,
+    required this.description,
+    required this.category,
+    required this.image,
+  });
+
+  factory Product.fromJson(Map<String, dynamic> json) {
+    return Product(
+      id: json['id'] is int ? json['id'] as int : int.parse(json['id'].toString()),
+      title: json['title'] ?? '',
+      price: (json['price'] is int) ? (json['price'] as int).toDouble() : (json['price'] as num).toDouble(),
+      description: json['description'] ?? '',
+      category: json['category'] ?? '',
+      image: json['image'] ?? '',
+    );
+  }
+}
+
+// ----------------- API Service -----------------
+class ApiService {
+  static const String baseUrl = 'https://fakestoreapi.com';
+
+  static Future<List<Product>> fetchProducts() async {
+    final url = Uri.parse('$baseUrl/products');
+    final resp = await http.get(url);
+    if (resp.statusCode == 200) {
+      final List data = json.decode(resp.body);
+      return data.map((e) => Product.fromJson(e)).toList();
+    } else {
+      throw Exception('Failed to load products: ${resp.statusCode}');
+    }
+  }
+}
+
+// ----------------- Controllers -----------------
+class ProductController extends GetxController {
+  var products = <Product>[].obs;
+  var isLoading = false.obs;
+  var error = ''.obs;
+
+  @override
+  void onInit() {
+    super.onInit();
+    fetchAll();
+  }
+
+  Future<void> fetchAll() async {
+    try {
+      isLoading(true);
+      error('');
+      final res = await ApiService.fetchProducts();
+      products.assignAll(res);
+    } catch (e) {
+      error(e.toString());
+    } finally {
+      isLoading(false);
+    }
+  }
+}
+
+class CartController extends GetxController {
+  var items = <Product>[].obs;
+
+  void add(Product p) {
+    items.add(p);
+    Get.snackbar('Cart', '"${p.title}" added', snackPosition: SnackPosition.BOTTOM);
+  }
+
+  void remove(Product p) {
+    items.remove(p);
+  }
+
+  double get total => items.fold(0.0, (s, p) => s + p.price);
+}
+
+// ----------------- UI -----------------
+void main() {
+  runApp(MyApp());
+}
+
+class MyApp extends StatelessWidget {
+  final ProductController pc = Get.put(ProductController());
+  final CartController cc = Get.put(CartController());
+
+  @override
+  Widget build(BuildContext context) {
+    return GetMaterialApp(
+      title: 'Kids Shop (GetX + REST)',
+      home: ProductListPage(),
+      debugShowCheckedModeBanner: false,
+    );
+  }
+}
+
+class ProductListPage extends StatelessWidget {
+  final ProductController pc = Get.find();
+  final CartController cc = Get.find();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Kids Shop'),
+        actions: [
+          IconButton(
+            icon: Stack(
+              children: [
+                const Icon(Icons.shopping_cart),
+                Obx(() => Positioned(
+                  right: 0,
+                  child: CircleAvatar(
+                    radius: 8,
+                    child: Text(Get.find<CartController>().items.length.toString(), style: const TextStyle(fontSize: 10)),
+                  ),
+                )),
+              ],
+            ),
+            onPressed: () => Get.to(() => CartPage()),
+          ),
+        ],
+      ),
+      body: Obx(() {
+        if (pc.isLoading.value) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        if (pc.error.value.isNotEmpty) {
+          return Center(child: Text('Error: ${pc.error.value}'));
+        }
+        return RefreshIndicator(
+          onRefresh: pc.fetchAll,
+          child: ListView.builder(
+            padding: const EdgeInsets.all(8),
+            itemCount: pc.products.length,
+            itemBuilder: (context, i) {
+              final p = pc.products[i];
+              return Card(
+                child: ListTile(
+                  leading: Image.network(p.image, width: 60, height: 60, fit: BoxFit.contain),
+                  title: Text(p.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  subtitle: Text('\$${p.price.toStringAsFixed(2)}'),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.add_shopping_cart),
+                    onPressed: () => cc.add(p),
+                  ),
+                  onTap: () => Get.to(() => ProductDetailPage(product: p)),
+                ),
+              );
+            },
+          ),
+        );
+      }),
+    );
+  }
+}
+
+class ProductDetailPage extends StatelessWidget {
+  final Product product;
+  final CartController cc = Get.find();
+
+  ProductDetailPage({Key? key, required this.product}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(product.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.shopping_cart),
+            onPressed: () => Get.to(() => CartPage()),
+          )
+        ],
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(child: Image.network(product.image, height: 180, fit: BoxFit.contain)),
+            const SizedBox(height: 10),
+            Text(product.title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 6),
+            Text(product.category, style: const TextStyle(color: Colors.grey)),
+            const SizedBox(height: 6),
+            Text('\$${product.price.toStringAsFixed(2)}', style: const TextStyle(fontSize: 16)),
+            const SizedBox(height: 12),
+            Expanded(child: SingleChildScrollView(child: Text(product.description))),
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton.icon(
+                    icon: const Icon(Icons.add_shopping_cart),
+                    label: const Text('Add to Cart'),
+                    onPressed: () {
+                      cc.add(product);
+                    },
+                  ),
+                )
+              ],
+            )
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class CartPage extends StatelessWidget {
+  final CartController cc = Get.find();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Your Cart'),
+      ),
+      body: Obx(() {
+        if (cc.items.isEmpty) {
+          return const Center(child: Text('Cart is empty'));
+        }
+        return Column(
+          children: [
+            Expanded(
+              child: ListView.builder(
+                itemCount: cc.items.length,
+                itemBuilder: (context, i) {
+                  final p = cc.items[i];
+                  return ListTile(
+                    leading: Image.network(p.image, width: 50, height: 50, fit: BoxFit.contain),
+                    title: Text(p.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                    subtitle: Text('\$${p.price.toStringAsFixed(2)}'),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.delete),
+                      onPressed: () => cc.remove(p),
+                    ),
+                  );
+                },
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  Expanded(child: Text('Total: \$${cc.total.toStringAsFixed(2)}', style: const TextStyle(fontSize: 18))),
+                  ElevatedButton(
+                    child: const Text('Checkout'),
+                    onPressed: () {
+                      Get.defaultDialog(
+                        title: 'Checkout',
+                        middleText: 'This is a demo. Implement payment later.',
+                        onConfirm: () {
+                          cc.items.clear();
+                          Get.back();
+                          Get.snackbar('Order', 'Order placed (demo)');
+                        },
+                        onCancel: () {},
+                      );
+                    },
+                  )
+                ],
+              ),
+            )
+          ],
+        );
+      }),
+    );
+  }
+}
